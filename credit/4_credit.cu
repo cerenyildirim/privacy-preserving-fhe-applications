@@ -17,7 +17,7 @@ void sig_handler(int sig) { // signal handler for shell signals
 }
 
 // Set to 1 to enable debug messages (outputs the multiplicative depth of the ciphertexts)
-#define DEBUG_DEPTH      0
+#define DEBUG_DEPTH      1
 #define DEBUG_LOG(domain, msg) \
     do { if (domain) std::cout << msg << std::endl; } while(0)
 
@@ -31,7 +31,7 @@ struct EvalResults {
 };
 
 // Decyrpts and prints a ciphertext
-void printCiphertext(heongpu::Ciphertext<heongpu::Scheme::CKKS> C, heongpu::HEContext<heongpu::Scheme::CKKS> context, heongpu::HEDecryptor<heongpu::Scheme::CKKS> decryptor, heongpu::HEEncoder<heongpu::Scheme::CKKS>& encoder) {
+void printCiphertext(heongpu::Ciphertext<heongpu::Scheme::CKKS>& C, heongpu::HEContext<heongpu::Scheme::CKKS>& context, heongpu::HEDecryptor<heongpu::Scheme::CKKS>& decryptor, heongpu::HEEncoder<heongpu::Scheme::CKKS>& encoder) {
     heongpu::Plaintext<heongpu::Scheme::CKKS> X_b(context);
     std::vector<double> X_b_vec;
     decryptor.decrypt(X_b, C);
@@ -130,7 +130,6 @@ void RIS(heongpu::Ciphertext<heongpu::Scheme::CKKS>& C, int p, int s, heongpu::G
     heongpu::Ciphertext<heongpu::Scheme::CKKS> copyC(context);
     for (int i = 0; i < log2(s); i++) {
         int shift = p * pow(2, i);
-        //  std::cout << "Shift: " << shift << std::endl;
         operators.rotate_rows(C, copyC, galois_key, shift); 
         operators.add_inplace(C, copyC);
        
@@ -142,15 +141,13 @@ void RR(heongpu::Ciphertext<heongpu::Scheme::CKKS>& C, int p, int s, heongpu::Ga
     heongpu::Ciphertext<heongpu::Scheme::CKKS> copyC(context);
     for (int i = 0; i < log2(s); i++) {
         int shift = - p * pow(2, i);
-        // std::cout << "Shift: " << shift << std::endl;
         operators.rotate_rows(C, copyC, galois_key, shift); 
         operators.add_inplace(C, copyC);
-        
     }
 }
 
 // Evaluates the polynomial approximation of the softplus function homomorphically
-void Softplus(heongpu::Ciphertext<heongpu::Scheme::CKKS>& R, heongpu::Ciphertext<heongpu::Scheme::CKKS> I, heongpu::Plaintext<heongpu::Scheme::CKKS> PA3, heongpu::Plaintext<heongpu::Scheme::CKKS> PA2, heongpu::Plaintext<heongpu::Scheme::CKKS> PA1, heongpu::Plaintext<heongpu::Scheme::CKKS> PA0, heongpu::HEArithmeticOperator<heongpu::Scheme::CKKS>& operators, heongpu::HEContext<heongpu::Scheme::CKKS>& context, heongpu::HEEncoder<heongpu::Scheme::CKKS>& encoder, heongpu::Relinkey<heongpu::Scheme::CKKS> &relin_key, double scale, double slot_count, heongpu::HEDecryptor<heongpu::Scheme::CKKS> decryptor) {   
+void Softplus(heongpu::Ciphertext<heongpu::Scheme::CKKS>& R, heongpu::Ciphertext<heongpu::Scheme::CKKS>& I, double PA3, double PA2, double PA1, double PA0, heongpu::HEArithmeticOperator<heongpu::Scheme::CKKS>& operators, heongpu::HEContext<heongpu::Scheme::CKKS>& context, heongpu::HEEncoder<heongpu::Scheme::CKKS>& encoder, heongpu::Relinkey<heongpu::Scheme::CKKS> &relin_key, double scale, double slot_count, heongpu::HEDecryptor<heongpu::Scheme::CKKS>& decryptor) {   
 
     // printCiphertext(I, context, decryptor, encoder);
     heongpu::Ciphertext<heongpu::Scheme::CKKS> I2(context);
@@ -159,21 +156,15 @@ void Softplus(heongpu::Ciphertext<heongpu::Scheme::CKKS>& R, heongpu::Ciphertext
     operators.rescale_inplace(I2);
 
     heongpu::Ciphertext<heongpu::Scheme::CKKS> a3I(context);
-    while (PA3.depth() < I.depth()) {
-        operators.mod_drop_inplace(PA3);
-    }
 
-    operators.multiply_plain(I, PA3, a3I); // a3I Depth 3
+    operators.multiply_plain(I, PA3, a3I, scale); // a3I Depth 3
     operators.rescale_inplace(a3I);
     heongpu::Ciphertext<heongpu::Scheme::CKKS> I3(context);
     operators.multiply(I2, a3I, I3); // I3 Depth 4
     operators.relinearize_inplace(I3, relin_key);
     operators.rescale_inplace(I3);
 
-    while (PA2.depth() < I2.depth()) {
-        operators.mod_drop_inplace(PA2);
-    }
-    operators.multiply_plain_inplace(I2, PA2); // I2 Depth 4
+    operators.multiply_plain_inplace(I2, PA2, scale); // I2 Depth 4
     operators.rescale_inplace(I2);
 
     while (I2.depth() < I3.depth()) { // unnecessary
@@ -182,10 +173,7 @@ void Softplus(heongpu::Ciphertext<heongpu::Scheme::CKKS>& R, heongpu::Ciphertext
 
     operators.add(I3, I2, R); // R Depth 4
 
-    while (PA1.depth() < I.depth()) {
-        operators.mod_drop_inplace(PA1);
-    }
-    operators.multiply_plain_inplace(I, PA1); // I Depth 3
+    operators.multiply_plain_inplace(I, PA1, scale); // I Depth 3
     operators.rescale_inplace(I);
 
     while (I.depth() < R.depth()) {
@@ -193,14 +181,13 @@ void Softplus(heongpu::Ciphertext<heongpu::Scheme::CKKS>& R, heongpu::Ciphertext
     }
     operators.add_inplace(R, I);
 
-    while (PA0.depth() < R.depth()) {
-        operators.mod_drop_inplace(PA0);
-    }
     operators.add_plain_inplace(R, PA0);
 }
 
 // Evaluates the polynomial approximation of the sigmoid function homomorphically
-void Sigmoid(heongpu::Ciphertext<heongpu::Scheme::CKKS>& R, heongpu::Ciphertext<heongpu::Scheme::CKKS> I, heongpu::Plaintext<heongpu::Scheme::CKKS> PA3, heongpu::Plaintext<heongpu::Scheme::CKKS> PA2, heongpu::Plaintext<heongpu::Scheme::CKKS> PA1, heongpu::Plaintext<heongpu::Scheme::CKKS> PA0, heongpu::HEArithmeticOperator<heongpu::Scheme::CKKS> operators, heongpu::HEContext<heongpu::Scheme::CKKS>& context, heongpu::HEEncoder<heongpu::Scheme::CKKS>& encoder, heongpu::Relinkey<heongpu::Scheme::CKKS> relin_key, double scale, double slot_count) {
+//void Sigmoid(heongpu::Ciphertext<heongpu::Scheme::CKKS>& R, heongpu::Ciphertext<heongpu::Scheme::CKKS> I, heongpu::Plaintext<heongpu::Scheme::CKKS> PA3, heongpu::Plaintext<heongpu::Scheme::CKKS> PA2, heongpu::Plaintext<heongpu::Scheme::CKKS> PA1, heongpu::Plaintext<heongpu::Scheme::CKKS> PA0, heongpu::HEArithmeticOperator<heongpu::Scheme::CKKS> operators, heongpu::HEContext<heongpu::Scheme::CKKS>& context, heongpu::HEEncoder<heongpu::Scheme::CKKS>& encoder, heongpu::Relinkey<heongpu::Scheme::CKKS> relin_key, double scale, double slot_count) {
+void Sigmoid(heongpu::Ciphertext<heongpu::Scheme::CKKS>& R, heongpu::Ciphertext<heongpu::Scheme::CKKS>& I, double PA3, double PA2, double PA1, double PA0, heongpu::HEArithmeticOperator<heongpu::Scheme::CKKS>& operators, heongpu::HEContext<heongpu::Scheme::CKKS>& context, heongpu::HEEncoder<heongpu::Scheme::CKKS>& encoder, heongpu::Relinkey<heongpu::Scheme::CKKS>& relin_key, double scale, double slot_count) {
+
     heongpu::Ciphertext<heongpu::Scheme::CKKS> I2(context);
     operators.multiply(I, I, I2);
     operators.relinearize_inplace(I2, relin_key);
@@ -209,11 +196,8 @@ void Sigmoid(heongpu::Ciphertext<heongpu::Scheme::CKKS>& R, heongpu::Ciphertext<
     // std::cout << "I2 depth: " << I2.depth() << std::endl;
 
     heongpu::Ciphertext<heongpu::Scheme::CKKS> a3I(context);
-    while (PA3.depth() < I.depth()) {
-        operators.mod_drop_inplace(PA3);
-    }
 
-    operators.multiply_plain(I, PA3, a3I); // a3I Depth 3
+    operators.multiply_plain(I, PA3, a3I, scale); // a3I Depth 3
     operators.rescale_inplace(a3I);
     heongpu::Ciphertext<heongpu::Scheme::CKKS> I3(context);
     operators.multiply(I2, a3I, I3); // I3 Depth 4
@@ -221,12 +205,8 @@ void Sigmoid(heongpu::Ciphertext<heongpu::Scheme::CKKS>& R, heongpu::Ciphertext<
     operators.rescale_inplace(I3);
 
     // std::cout << "I3 depth: " << I3.depth() << std::endl;
-    
 
-    while (PA2.depth() < I2.depth()) {
-        operators.mod_drop_inplace(PA2); // Ensure PA2 Depth matches I2 Depth
-    }
-    operators.multiply_plain_inplace(I2, PA2); // I2 Depth 9
+    operators.multiply_plain_inplace(I2, PA2, scale); // I2 Depth 9
     operators.rescale_inplace(I2);
 
     while (I2.depth() < I3.depth()) {
@@ -234,10 +214,7 @@ void Sigmoid(heongpu::Ciphertext<heongpu::Scheme::CKKS>& R, heongpu::Ciphertext<
     }
     operators.add(I3, I2, R); // R Depth 10
 
-    while (PA1.depth() < I.depth()) {
-        operators.mod_drop_inplace(PA1); // Ensure PA1 Depth matches I Depth
-    }
-    operators.multiply_plain_inplace(I, PA1); // I Depth 9
+    operators.multiply_plain_inplace(I, PA1, scale); // I Depth 9
     operators.rescale_inplace(I);
 
     while (I.depth() < R.depth()) {
@@ -245,9 +222,6 @@ void Sigmoid(heongpu::Ciphertext<heongpu::Scheme::CKKS>& R, heongpu::Ciphertext<
     }
     operators.add_inplace(R, I);
 
-    while (PA0.depth() < R.depth()) {
-        operators.mod_drop_inplace(PA0); // Ensure PA0 Depth matches R Depth
-    }
     operators.add_plain_inplace(R, PA0); // R Depth 10
 }
 
@@ -487,6 +461,10 @@ int main(int argc, char* argv[])
     context.generate();
     context.print_parameters();
 
+    std::cout << "moduli" << ": ";
+    for (int v : moduli) std::cout << v << " ";
+        std::cout << "\n";
+
     // The scale is set to 2^50, resulting in 50 bits of precision before the decimal point
     double scale = pow(2.0, scale_bits);
 
@@ -508,32 +486,14 @@ int main(int argc, char* argv[])
     heongpu::HEDecryptor<heongpu::Scheme::CKKS> decryptor(context, secret_key);
     heongpu::HEArithmeticOperator<heongpu::Scheme::CKKS> operators(context, encoder);
 
-    // Setting the bootstrapping parameters
-    // CtoS_piece_ = [2,5]
-    // StoC_piece_ = [2,5]
-    // taylor_number_ = [6,15]
-    // less_key_mode_ = true or false
     int StoC_piece = 3;
-    heongpu::BootstrappingConfig boot_config(3, StoC_piece, 10, true);
+    heongpu::BootstrappingConfig boot_config(3, StoC_piece, 10, false);
     // Generates all bootstrapping parameters before bootstrapping
-    operators.generate_bootstrapping_params(scale, boot_config);
+    operators.generate_bootstrapping_params(scale, boot_config, heongpu::arithmetic_bootstrapping_type::SLIM_BOOTSTRAPPING);
 
-    std::vector<int> key_index = operators.bootstrapping_key_indexs();
-    std::vector<int> remaining_index = {-1, -2, -4, -8, -16, -32, -64, -128, -256, -512, -1024}; // Extra keys needed for the RR operations
-    key_index.insert( key_index.end(), remaining_index.begin(), remaining_index.end() );
-
-    // for (int i = 0; i < key_index.size(); i++) {
-    //     std::cout << key_index[i] << " ";
-    // }
-
-    std::cout << "Total galois key needed for CKKS bootstrapping: "
-              << key_index.size() << std::endl;
-    // heongpu::Galoiskey<heongpu::Scheme::CKKS> galois_key_rot(context, key_index, false); // all galois keys are stored in GPU
-    
-    heongpu::Galoiskey<heongpu::Scheme::CKKS> galois_key_rot(context, key_index);
+    heongpu::Galoiskey<heongpu::Scheme::CKKS> galois_key_rot(context, 14);
     keygen.generate_galois_key(galois_key_rot, secret_key,
-        heongpu::ExecutionOptions().set_storage_type(heongpu::storage_type::HOST));
-
+        heongpu::ExecutionOptions().set_storage_type(heongpu::storage_type::DEVICE));
     std::cout << "Galois key generation finished!" << std::endl;
 
     // This portion about arg parse has been moved at beginning of main // arsalan
@@ -568,6 +528,8 @@ int main(int argc, char* argv[])
     std::vector<int> chosen_indices;
 
     if (paths_envvar) std::cout << "++++++paths_ennvar provided" << std::endl; 
+
+    std::cout << "--> " <<  data_dir + "/packed_X.txt" << std::endl; 
     
     packed_X = read2DArrayTrain(  paths_envvar ? get_env("PACKED_X") : data_dir + "/packed_X.txt", slot_count);
     packed_X_t = read2DArrayTest( paths_envvar ? get_env("PACKED_X_T") :  data_dir + "/packed_X_t.txt");
@@ -575,7 +537,6 @@ int main(int argc, char* argv[])
     y_t = read2DArrayTest(  paths_envvar ? get_env("Y_TEST") :  data_dir + "/y_test.txt");
     packed_W = read2DArrayModel( paths_envvar ? get_env("PACKED_W") :   data_dir + "/packed_W.txt", slot_count, h);
     chosen_indices = readChosenIndices(  paths_envvar ? get_env("CHOSEN_INDICES") :  data_dir + "/chosen_indices.txt");
-
 
     // Generate masks for each layer to be used during homomorphic finetuning
     std::vector<double> m1(slot_count, 0);
@@ -630,26 +591,6 @@ int main(int argc, char* argv[])
             m4_i[i] = 1;
     }
 
-    // **** Encode the packed values **** //
-    // Encode P_X (training samples)
-    std::vector<heongpu::Plaintext<heongpu::Scheme::CKKS>> P_X;
-
-    for (int i = 0; i < m; i++) {
-        heongpu::Plaintext<heongpu::Scheme::CKKS> P_X_i(context);
-        encoder.encode(P_X_i, packed_X[i], scale);
-        P_X.push_back(std::move(P_X_i));
-    }
-
-
-    // Encode P_y (training labels)
-    std::vector<heongpu::Plaintext<heongpu::Scheme::CKKS>> P_y;
-
-    for (int i = 0; i < m; i++) {
-        heongpu::Plaintext<heongpu::Scheme::CKKS> P_y_i(context);
-        encoder.encode(P_y_i, packed_y[i], scale);
-        P_y.push_back(std::move(P_y_i));
-    }
-
     // Encode P_W (model weights)
     std::vector<heongpu::Plaintext<heongpu::Scheme::CKKS>> P_W;
     for (int i = 0; i < ell; i++) {
@@ -657,57 +598,18 @@ int main(int argc, char* argv[])
             encoder.encode(P_W_i, packed_W[i], scale);
             P_W.emplace_back(std::move(P_W_i));
     }
-
- 
-    // Encode P_m1 (mask 1)
-    heongpu::Plaintext<heongpu::Scheme::CKKS> P_m1;
-    encoder.encode(P_m1, m1, scale);
-
-    // Encode P_m2 (mask 2)
-    heongpu::Plaintext<heongpu::Scheme::CKKS> P_m2;
-    encoder.encode(P_m2, m2, scale);
-
-    // Encode P_m3 (mask 3)
-    heongpu::Plaintext<heongpu::Scheme::CKKS> P_m3;
-    encoder.encode(P_m3, m3, scale);
-
-    // Encode P_m4 (mask 4)
-    heongpu::Plaintext<heongpu::Scheme::CKKS> P_m4;
-    encoder.encode(P_m4, m4, scale);
-
-    // TODO: Encode the half masks later on when working with uneven batches, the current assumption is that we work with full batches.
-
+    
     // Encode softplus coefficients
-    std::vector<double> SP_C3(slot_count, -2.38253701e-05);
-    std::vector<double> SP_C2(slot_count, 3.51409155e-03);
-    std::vector<double> SP_C1(slot_count, 8.49230659e-01);
-    std::vector<double> SP_C0(slot_count, 1.81535534e+00);
-
-    heongpu::Plaintext<heongpu::Scheme::CKKS> SP_P3(context);
-    heongpu::Plaintext<heongpu::Scheme::CKKS> SP_P2(context);
-    heongpu::Plaintext<heongpu::Scheme::CKKS> SP_P1(context);
-    heongpu::Plaintext<heongpu::Scheme::CKKS> SP_P0(context);
-
-    encoder.encode(SP_P3, SP_C3, scale);
-    encoder.encode(SP_P2, SP_C2, scale);
-    encoder.encode(SP_P1, SP_C1, scale);
-    encoder.encode(SP_P0, SP_C0, scale);
+    //SP_C3 -2.38253701e-05
+    //SP_C2 3.51409155e-03
+    //SP_C1 8.49230659e-01
+    //SP_C0 1.81535534e+00
 
     // Encode sigmoid coefficients
-    std::vector<double> SG_C3(slot_count, 5.60468547e-06);
-    std::vector<double> SG_C2(slot_count, -8.37716501e-04);
-    std::vector<double> SG_C1(slot_count, 3.67742962e-02);
-    std::vector<double> SG_C0(slot_count, 5.37938314e-01);
-
-    heongpu::Plaintext<heongpu::Scheme::CKKS> SG_P3(context);
-    heongpu::Plaintext<heongpu::Scheme::CKKS> SG_P2(context);
-    heongpu::Plaintext<heongpu::Scheme::CKKS> SG_P1(context);
-    heongpu::Plaintext<heongpu::Scheme::CKKS> SG_P0(context);
-
-    encoder.encode(SG_P3, SG_C3, scale);
-    encoder.encode(SG_P2, SG_C2, scale);
-    encoder.encode(SG_P1, SG_C1, scale);
-    encoder.encode(SG_P0, SG_C0, scale);
+    // SG_C3  5.60468547e-06
+    // SG_C2  -8.37716501e-04
+    // SG_C1  3.67742962e-02
+    // SG_C0  5.37938314e-01
 
     std::cout << "Encoding finished!" << std::endl;
 
@@ -721,7 +623,7 @@ int main(int argc, char* argv[])
         C_W.emplace_back(std::move(C_W_i));
     }
 
-    std::cout << "Encryption finished!" << std::endl;
+    std::cout << "Encryption finished! " << ell << std::endl;
 
     // After training but before fine-tuning
     EvalResults before = evaluate_model(packed_X_t, y_t, packed_W, chosen_indices,
@@ -735,7 +637,6 @@ int main(int argc, char* argv[])
     double total_training_time = 0.0;
 
     for (int rn = 0; rn < round; rn++) {
-        // std::cout << "Round " << rn << std::endl;
         for (int t = 0; t < m; t++) {
             std::cout << " >>> Round " << rn << " - Batch " << t << std::endl;
 
@@ -748,14 +649,13 @@ int main(int argc, char* argv[])
             heongpu::Ciphertext<heongpu::Scheme::CKKS> d_W_4(context);
             encryptor.encrypt(d_W_4, all_zeros_plain);
             
-
             const auto start_clients{std::chrono::steady_clock::now()};
             const std::chrono::duration<double> elapsed_seconds_for_prep{(start_clients - start_prep)};
             
             for (int item = 0; item < b; item++) {
                 if (t*b+item < len_X_train) {
                     heongpu::Plaintext<heongpu::Scheme::CKKS> L_0(context);
-                    L_0 = P_X[t*b+item];
+                    encoder.encode(L_0, packed_X[t*b+item], scale);
                     
                     // ---- Layer 1 ----
 
@@ -767,6 +667,9 @@ int main(int argc, char* argv[])
                     DEBUG_LOG(DEBUG_DEPTH, " > Depth U_1 after multiply: " << U_1.depth());
 
                     RIS(U_1, 1, h[0], galois_key_rot, operators, context);
+
+                    heongpu::Plaintext<heongpu::Scheme::CKKS> P_m1;
+                    encoder.encode(P_m1, m1, scale);
                     
                     while (P_m1.depth() < U_1.depth()) {
                         operators.mod_drop_inplace(P_m1); 
@@ -780,7 +683,8 @@ int main(int argc, char* argv[])
                     RR(U_1, 1, h[2], galois_key_rot, operators, context);
 
                     heongpu::Ciphertext<heongpu::Scheme::CKKS> L_1(context);
-                    Softplus(L_1, U_1, SP_P3, SP_P2, SP_P1, SP_P0, operators, context, encoder, relin_key, scale, slot_count, decryptor);
+
+                    Softplus(L_1, U_1, -2.38253701e-05, 3.51409155e-03, 8.49230659e-01, 1.81535534e+00, operators, context, encoder, relin_key, scale, slot_count, decryptor);
                     
                     DEBUG_LOG(DEBUG_DEPTH, " > Depth L_1 after softplus: " << L_1.depth());
 
@@ -800,19 +704,20 @@ int main(int argc, char* argv[])
 
                     RIS(U_2, h[2], h[1], galois_key_rot, operators, context);
                 
+                    heongpu::Plaintext<heongpu::Scheme::CKKS> P_m2;
+                    encoder.encode(P_m2, m2, scale);
                     while (U_2.depth() > P_m2.depth()) {
                         operators.mod_drop_inplace(P_m2); 
                     }
             
                     operators.multiply_plain_inplace(U_2, P_m2); 
-                    // encoder.encode(P_m2, m2, scale);
                     operators.rescale_inplace(U_2);
                     DEBUG_LOG(DEBUG_DEPTH, " > Depth U_2 after RIS: " << U_2.depth());     
                     
                     RR(U_2, h[2], h[3], galois_key_rot, operators, context);
 
                     heongpu::Ciphertext<heongpu::Scheme::CKKS> L_2(context);
-                    Softplus(L_2, U_2, SP_P3, SP_P2, SP_P1, SP_P0, operators, context, encoder, relin_key, scale, slot_count, decryptor);
+                    Softplus(L_2, U_2, -2.38253701e-05, 3.51409155e-03, 8.49230659e-01, 1.81535534e+00, operators, context, encoder, relin_key, scale, slot_count, decryptor);
                     DEBUG_LOG(DEBUG_DEPTH, " > Depth L_2 after softplus: " << L_2.depth());
 
                     // ---- Layer 3 ----
@@ -827,11 +732,12 @@ int main(int argc, char* argv[])
                     operators.relinearize_inplace(U_3, relin_key);
                     operators.rescale_inplace(U_3);
                     
-                    
                     DEBUG_LOG(DEBUG_DEPTH, " > Depth U_3 after multiply: " << U_3.depth());
 
                     RIS(U_3, 1, h[2], galois_key_rot, operators, context);
                     
+                    heongpu::Plaintext<heongpu::Scheme::CKKS> P_m3;
+                    encoder.encode(P_m3, m3, scale);
                     while (U_3.depth() > P_m3.depth()) {
                         operators.mod_drop_inplace(P_m3); 
                     }
@@ -844,7 +750,7 @@ int main(int argc, char* argv[])
                     RR(U_3, 1, h[4], galois_key_rot, operators, context);
 
                     heongpu::Ciphertext<heongpu::Scheme::CKKS> L_3(context);
-                    Softplus(L_3, U_3, SP_P3, SP_P2, SP_P1, SP_P0, operators, context, encoder, relin_key, scale, slot_count, decryptor);
+                    Softplus(L_3, U_3, -2.38253701e-05, 3.51409155e-03, 8.49230659e-01, 1.81535534e+00, operators, context, encoder, relin_key, scale, slot_count, decryptor);
                     DEBUG_LOG(DEBUG_DEPTH, " > Depth L_3 after softplus: " << L_3.depth());
 
                     // ---- Layer 4 ----
@@ -868,9 +774,9 @@ int main(int argc, char* argv[])
                     DEBUG_LOG(DEBUG_DEPTH, " > Depth U_4 after multiply: " << U_4.depth());
 
                     RIS(U_4, h[2], h[3], galois_key_rot, operators, context);
-                    
                  
-                    encoder.encode(P_m4, m4, scale); // Refresh mask 4 as it will be used during backpropogation at different depth
+                    heongpu::Plaintext<heongpu::Scheme::CKKS> P_m4;
+                    encoder.encode(P_m4, m4, scale);
 
                     while (U_4.depth() > P_m4.depth()) {
                         operators.mod_drop_inplace(P_m4); 
@@ -882,10 +788,10 @@ int main(int argc, char* argv[])
                     
                     operators.multiply_plain_inplace(U_4, P_m4); 
                     operators.rescale_inplace(U_4);
-                    DEBUG_LOG(DEBUG_DEPTH, " > Depth U_4 after RIS: " << U_4.depth());     
-
+                    DEBUG_LOG(DEBUG_DEPTH, " > Depth U_4 after RIS: " << U_4.depth());    
+                    
                     heongpu::Ciphertext<heongpu::Scheme::CKKS> L_4(context);
-                    Sigmoid(L_4, U_4, SG_P3, SG_P2, SG_P1, SG_P0, operators, context, encoder, relin_key, scale, slot_count);
+                    Sigmoid(L_4, U_4, 5.60468547e-06, -8.37716501e-04, 3.67742962e-02, 5.37938314e-01, operators, context, encoder, relin_key, scale, slot_count);
                     DEBUG_LOG(DEBUG_DEPTH, " > Depth L_4 after sigmoid: " << L_4.depth());
                     
                     // while (L_4.depth() < (number_of_moduli - StoC_piece)) {
@@ -904,7 +810,7 @@ int main(int argc, char* argv[])
                     heongpu::Ciphertext<heongpu::Scheme::CKKS> E_4(context);
                     operators.negate(L_4, E_4); 
                     heongpu::Plaintext<heongpu::Scheme::CKKS> P_y_curr(context);
-                    P_y_curr = P_y[t*b+item]; 
+                    encoder.encode(P_y_curr, packed_y[t*b+item], scale);
 
                     while (P_y_curr.depth() < E_4.depth()) {
                         operators.mod_drop_inplace(P_y_curr);
@@ -962,7 +868,6 @@ int main(int argc, char* argv[])
                 }
             }
 
-
             const auto finish_clients{std::chrono::steady_clock::now()};
 
             const std::chrono::duration<double> elapsed_seconds_for_training{(finish_clients - start_clients)};
@@ -1008,7 +913,7 @@ int main(int argc, char* argv[])
             }
 
             DEBUG_LOG(DEBUG_DEPTH, " > Depth C_W_3 before bootstrapping: " << C_W[3].depth());
-    
+            
             heongpu::Ciphertext<heongpu::Scheme::CKKS> C_W_b3 = operators.slim_bootstrapping(C_W[3], galois_key_rot, relin_key);
 
             DEBUG_LOG(DEBUG_DEPTH, " > Depth C_W_b3 after bootstrapping: " << C_W_b3.depth());
@@ -1049,12 +954,12 @@ int main(int argc, char* argv[])
     std::cout << "Fine-tuning improved subset accuracy by "
           << (after.accuracy_subset - before.accuracy_subset)
           << "%\n";
- } catch (const std::exception& ex) {
-    std::cerr << "Error occurred: " << ex.what() << std::endl;
-    exit (EXIT_FAILURE);
- } catch (...) {
-    std::cerr << "An exception occured and program is abruptly terminated" <<std::endl;
-    exit (EXIT_FAILURE);
- }    
+    } catch (const std::exception& ex) {
+        std::cerr << "Error occurred: " << ex.what() << std::endl;
+        exit (EXIT_FAILURE);
+    } catch (...) {
+        std::cerr << "An exception occured and program is abruptly terminated" <<std::endl;
+        exit (EXIT_FAILURE);
+    }    
     return EXIT_SUCCESS;
 }
